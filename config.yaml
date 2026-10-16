@@ -1,29 +1,35 @@
-# Sentinel configuration
-# Secrets (the Discord webhook) do NOT belong here. Set DISCORD_WEBHOOK_URL
-# in your environment or in a local .env file instead.
+# Sentinel configuration for Judea's deployed projects.
+# Keep DISCORD_WEBHOOK_URL in GitHub Actions Secrets, never in this file.
 
 settings:
-  interval: 60            # seconds between check cycles
-  timeout: 10             # seconds before a request is considered failed
-  retries: 1              # extra attempts before a check counts as failed
-  failure_threshold: 2    # consecutive failed checks before a DOWN alert
-  workers: 8              # sites checked in parallel
-  ssl_warn_days: 14       # alert when a certificate expires within N days
-  log_file: uptime.log
-  state_file: state.json
-  status_file: status.json
+  interval: 300
+  timeout: 20
+  retries: 1
+  failure_threshold: 2
+  workers: 4
+  ssl_warn_days: 14
+  log_file: .sentinel-state/uptime.log
+  state_file: .sentinel-state/state.json
+  status_file: .sentinel-state/status.json
 
 sites:
-  - name: Google
-    url: https://www.google.com
-
-  - name: GitHub
-    url: https://github.com
+  - name: Wine About It
+    url: https://wine-about-it.vercel.app/
     expected_status: [200]
+    timeout: 20
 
-  # More options per site:
-  # - name: My API
-  #   url: https://api.example.com/health
-  #   expected_status: [200, 204]   # accepted status codes
-  #   timeout: 5                    # overrides settings.timeout
-  #   keyword: '"status":"ok"'      # response body must contain this text
+  - name: Judea Portfolio
+    url: https://judeatablate.vercel.app/
+    expected_status: [200]
+    timeout: 20
+
+  - name: SplitBill
+    url: https://splitbill-5ulc.onrender.com/
+    expected_status: [200]
+    # Render may take longer to respond if the service has been idle.
+    timeout: 60
+
+  - name: Second Sense
+    url: https://second-sense-frontend.vercel.app/
+    expected_status: [200]
+    timeout: 20
