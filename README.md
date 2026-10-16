@@ -8,7 +8,7 @@ Sentinel checks your websites and APIs on a schedule, remembers their state, and
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-**Live site:** https://judeatablate.github.io/sentinel-uptime-monitor/
+**Documentation:** https://sentinel-uptime-monitor-docs.vercel.app/
 
 ## Features
 
@@ -28,7 +28,11 @@ Sentinel checks your websites and APIs on a schedule, remembers their state, and
 ```bash
 git clone https://github.com/JudeaTablate/sentinel-uptime-monitor.git
 cd sentinel-uptime-monitor
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+python -m venv .venv
+# macOS/Linux:
+source .venv/bin/activate
+# Windows PowerShell:
+# .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
 cp .env.example .env          # then paste your webhook URL into .env
@@ -106,7 +110,7 @@ User=sentinel
 WantedBy=multi-user.target
 ```
 
-**GitHub Actions (no server)**: add `DISCORD_WEBHOOK_URL` under *Settings → Secrets and variables → Actions* and run `python monitor.py --once` on a `schedule:` trigger.
+**GitHub Actions (no always-on server)**: add `DISCORD_WEBHOOK_URL` under *Settings → Secrets and variables → Actions*. Use a scheduled workflow to run `python monitor.py --once`. Note that GitHub-hosted scheduled jobs have timing limits and are not a substitute for continuous, minute-by-minute monitoring.
 
 ## Development
 
@@ -115,7 +119,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-The suite covers config validation, alert state transitions, retries, Discord rate limiting, and a guard test that fails if a webhook-looking URL ever lands in the repo.
+The suite covers config validation (including invalid per-site settings), alert state transitions, retries, Discord rate limiting, and a guard test that fails if a webhook-looking URL ever lands in tracked source.
 
 ## Project layout
 
@@ -125,8 +129,8 @@ The suite covers config validation, alert state transitions, retries, Discord ra
 | `config.yaml` | Sites and settings (no secrets) |
 | `.env.example` | Template for local secrets |
 | `tests/` | Test suite |
-| `docs/` | Project website (deployed with GitHub Pages) |
-| `.github/workflows/` | CI, secret scanning and site deployment |
+| `docs/` | Static documentation website (deployed separately on Vercel) |
+| `.github/workflows/` | Automated tests and secret scanning |
 
 ## Security
 

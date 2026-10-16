@@ -134,19 +134,34 @@ def parse_config(raw: dict) -> tuple[Settings, list[Site]]:
 
         expected = entry.get("expected_status", 200)
         codes = expected if isinstance(expected, list) else [expected]
+        if not codes:
+            raise ConfigError(f"site '{name}': expected_status cannot be empty")
         try:
             expected_status = tuple(int(code) for code in codes)
         except (TypeError, ValueError):
-            raise ConfigError(f"site '{name}': expected_status must be integers") from None
+            raise ConfigError(f"site '{name}': expected_status must contain integers") from None
+        if any(code < 100 or code > 599 for code in expected_status):
+            raise ConfigError(f"site '{name}': expected_status codes must be between 100 and 599")
 
         timeout = entry.get("timeout")
+        try:
+            timeout_value = float(timeout) if timeout is not None else None
+        except (TypeError, ValueError):
+            raise ConfigError(f"site '{name}': timeout must be a positive number") from None
+        if timeout_value is not None and timeout_value <= 0:
+            raise ConfigError(f"site '{name}': timeout must be a positive number")
+
+        keyword = entry.get("keyword")
+        if keyword is not None and not isinstance(keyword, str):
+            raise ConfigError(f"site '{name}': keyword must be a string")
+
         sites.append(
             Site(
                 name=name,
                 url=url,
                 expected_status=expected_status,
-                timeout=float(timeout) if timeout is not None else None,
-                keyword=entry.get("keyword"),
+                timeout=timeout_value,
+                keyword=keyword,
             )
         )
     return settings, sites

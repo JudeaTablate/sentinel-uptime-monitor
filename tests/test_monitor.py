@@ -86,6 +86,22 @@ def test_parse_config_rejects_bad_input(raw):
         monitor.parse_config(raw)
 
 
+@pytest.mark.parametrize(
+    "site_options",
+    [
+        {"timeout": "not-a-number"},
+        {"timeout": 0},
+        {"expected_status": []},
+        {"expected_status": [99]},
+        {"expected_status": [600]},
+        {"keyword": 123},
+    ],
+)
+def test_parse_config_rejects_invalid_site_options(site_options):
+    with pytest.raises(monitor.ConfigError):
+        monitor.parse_config({"sites": [{"url": "https://a.test", **site_options}]})
+
+
 def test_load_config_missing_file(tmp_path):
     with pytest.raises(monitor.ConfigError):
         monitor.load_config(tmp_path / "nope.yaml")
