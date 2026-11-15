@@ -18,3 +18,7 @@ Deleting it in a new commit does **not** make it safe: the value stays in git hi
 ## Reporting a vulnerability
 
 Please open a private security advisory on GitHub (**Security → Report a vulnerability**) rather than a public issue.
+
+## Email credentials
+
+Email alerts use an SMTP login (for Gmail, an App Password). Set `SMTP_USER`, `SMTP_PASSWORD` and `ALERT_EMAIL_TO` as environment variables or GitHub Actions secrets, never in code or `config.yaml`. Sentinel logs only the exception type when delivery fails, never the password or server details. If an App Password leaks, revoke it at https://myaccount.google.com/apppasswords and create a new one.

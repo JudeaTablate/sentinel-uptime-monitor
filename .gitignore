@@ -25,3 +25,7 @@ venv/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local run output and private configs
+.sentinel-state/
+*.private.yaml

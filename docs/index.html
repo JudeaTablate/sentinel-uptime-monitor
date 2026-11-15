@@ -190,8 +190,8 @@
   .stat small { display: block; color: var(--ink-2); font-size: 11px; }
   .row .pill { justify-self: end; }
   @media (max-width: 560px) {
-    .row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 8px; }
-    .row .spark, .row .stat { display: none; }
+    .row { grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; }
+    .row .spark { display: none; }
   }
   .panel-foot { padding: 14px 20px; background: var(--bg-soft); border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
   .panel-foot p { font-size: 13px; color: var(--ink-2); max-width: 36ch; }
@@ -367,6 +367,11 @@
   .log .warn { color: #f5b84a; }
   @keyframes logIn { from { opacity: 0; transform: translateY(8px); } }
 
+  .row-empty { padding: 28px 20px; color: var(--ink-2); font-size: 14px; text-align: center; }
+  .row-name a { color: inherit; text-decoration: none; }
+  .row-name a:hover { text-decoration: underline; }
+  .live-bar .live.stale { color: var(--amber); }
+
   /* scroll reveal: elements below the fold start hidden, then rise in */
   .reveal { transition: opacity 0.6s ease, transform 0.6s cubic-bezier(0.2, 0.7, 0.2, 1); }
   .reveal.pre { opacity: 0; transform: translateY(20px); }
@@ -420,9 +425,9 @@
     </div>
     <div class="wrap hero-grid">
       <div>
-        <p class="eyebrow">Uptime monitoring for Discord</p>
+        <p class="eyebrow">Uptime monitoring with instant alerts</p>
         <h1>Know your site is down <em>before your users do.</em></h1>
-        <p class="hero-sub">Sentinel checks your websites and APIs on a schedule and messages your Discord channel only when something changes. One Python file, no database, no dashboard to host.</p>
+        <p class="hero-sub">Sentinel checks your websites and APIs on a schedule and alerts you on Discord or by email only when something changes. One Python file, no database, no dashboard to host.</p>
         <div class="cta-row">
           <a class="btn btn-primary" href="#quick-start">Get started</a>
           <a class="btn btn-ghost" href="https://github.com/JudeaTablate/sentinel-uptime-monitor" target="_blank" rel="noopener">View the code</a>
@@ -430,24 +435,21 @@
         <ul class="facts">
           <li>Python 3.10+</li>
           <li>MIT licensed</li>
-          <li>33 automated tests</li>
+          <li>56 automated tests</li>
         </ul>
       </div>
 
       <div class="panel" aria-labelledby="panel-title">
         <div class="panel-head">
-          <div class="panel-title" id="panel-title">Status<small>simulated data</small></div>
+          <div class="panel-title" id="panel-title">Live status<small>real projects</small></div>
           <span class="pill ok" id="summary-pill">All systems operational</span>
         </div>
-        <div class="live-bar"><span class="live">Live</span><span>next check in <b id="countdown">5</b>s</span><span class="fill" id="fill"></span></div>
+        <div class="live-bar"><span class="live" id="live-label">Live</span><span id="meta">loading</span><span class="fill" id="fill"></span></div>
         <ul class="rows" id="rows"></ul>
         <div class="log" id="log" aria-hidden="true"></div>
-        <div class="alert-wrap" id="alert-wrap" hidden>
-          <div class="alert-card" id="alert-card" aria-live="polite"></div>
-        </div>
         <div class="panel-foot">
-          <p id="sim-note">Try it: Sentinel waits for two failed checks in a row before it alerts.</p>
-          <button class="btn btn-ghost btn-sm" id="sim-btn" type="button">Simulate an outage</button>
+          <p id="sim-note">These are real projects, checked every 5 minutes from GitHub's servers. If one goes down, Sentinel emails its owner.</p>
+          <a class="btn btn-ghost btn-sm" href="#how-it-works">How it works</a>
         </div>
       </div>
     </div>
@@ -481,9 +483,9 @@
           <p>Get a warning before a certificate expires, once per site, with the number of days left.</p>
         </article>
         <article class="feature">
-          <span class="tag">Discord</span>
-          <h3>Rich embeds</h3>
-          <p>Alerts show the reason, failed-check count, response time and downtime. Discord rate limits are handled for you.</p>
+          <span class="tag">Alerts</span>
+          <h3>Discord and email</h3>
+          <p>Alerts go to a Discord channel, an inbox, or both. Each one shows the reason, failed-check count, response time and downtime.</p>
         </article>
         <article class="feature">
           <span class="tag">Data</span>
@@ -673,6 +675,20 @@ jobs:
                   <tr><td><code>expected_status</code></td><td>Accepted status codes. Default 200.</td></tr>
                   <tr><td><code>timeout</code></td><td>Overrides the global timeout for this site.</td></tr>
                   <tr><td><code>keyword</code></td><td>Text the response body must contain.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div>
+            <h3 class="sub-h">Environment variables</h3>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>Variable</th><th>What it does</th></tr></thead>
+                <tbody>
+                  <tr><td><code>DISCORD_WEBHOOK_URL</code></td><td>Send alerts to a Discord channel.</td></tr>
+                  <tr><td><code>SMTP_USER</code>, <code>SMTP_PASSWORD</code></td><td>Gmail address and App Password for email alerts.</td></tr>
+                  <tr><td><code>ALERT_EMAIL_TO</code></td><td>Who receives email alerts. Separate several with commas.</td></tr>
+                  <tr><td><code>SENTINEL_CONFIG</code></td><td>Optional. The whole YAML config as one secret, to keep your site list private.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -869,28 +885,26 @@ jobs:
     });
   }
 
-  /* ---------- live status panel (simulated) ---------- */
-  var sites = [
-    { id: 'web',  name: 'Marketing site', url: 'example.com',                 ms: 112, min: 96,  max: 140, jit: 14 },
-    { id: 'api',  name: 'API',            url: 'api.example.com/health',      ms: 86,  min: 70,  max: 112, jit: 12 },
-    { id: 'docs', name: 'Docs',           url: 'docs.example.com',            ms: 143, min: 120, max: 175, jit: 16 },
-    { id: 'shop', name: 'Checkout',       url: 'shop.example.com/status',     ms: 201, min: 170, max: 245, jit: 22 }
-  ];
-  var POINTS = 20;
-  var state = {};
-  sites.forEach(function (s) {
-    state[s.id] = 'ok';
-    s.data = [];
-    var v = s.ms;
-    for (var k = 0; k < POINTS; k++) {
-      v = Math.max(s.min, Math.min(s.max, v + (Math.random() - 0.5) * s.jit));
-      s.data.push(Math.round(v));
-    }
-    s.ms = s.data[POINTS - 1];
-  });
-  var labels = { ok: 'Operational', degraded: 'Degraded', down: 'Down' };
+  /* ---------- live status panel (real data) ---------- */
+  // Sentinel's GitHub Actions workflow publishes status.json to this branch every 5 minutes.
+  var DATA_URL = 'https://raw.githubusercontent.com/JudeaTablate/sentinel-uptime-monitor/status-data/status.json';
+  var REFRESH_MS = 60000;
+  var STALE_MS = 30 * 60000;
+  var labels = { operational: 'Operational', degraded: 'Degraded', down: 'Down', unknown: 'Pending' };
+  var pillClass = { operational: 'ok', degraded: 'degraded', down: 'down', unknown: 'degraded' };
+
+  var rowsEl = document.getElementById('rows');
+  var logEl = document.getElementById('log');
+  var metaEl = document.getElementById('meta');
+  var liveEl = document.getElementById('live-label');
+  var fillEl = document.getElementById('fill');
+  var pillEl = document.getElementById('summary-pill');
+  var rowMap = {};
+  var lastStamp = null;
+  var lastData = null;
 
   function sparkPaths(values) {
+    if (!values || values.length < 2) return null;
     var w = 112, h = 32, pad = 3;
     var min = Math.min.apply(null, values), max = Math.max.apply(null, values);
     var span = Math.max(max - min, 8);
@@ -903,119 +917,139 @@ jobs:
     return { line: line, area: area, x: last[0], y: last[1] };
   }
 
-  var rowsEl = document.getElementById('rows');
-  sites.forEach(function (s) {
-    var li = document.createElement('li');
-    li.className = 'row';
-    li.innerHTML = '<div class="row-name"><strong></strong><span></span></div>' +
-      '<svg class="spark" viewBox="0 0 112 32" aria-hidden="true"><path class="a"/><path class="l"/><circle r="2.6"/></svg>' +
-      '<div class="stat"><b></b><small>latency</small></div><span class="pill ok"></span>';
-    li.querySelector('strong').textContent = s.name;
-    li.querySelector('.row-name span').textContent = s.url;
-    rowsEl.appendChild(li);
-    s.el = li;
-  });
-
-  function paintRow(s, tick) {
-    var st = state[s.id], r = s.el, p = sparkPaths(s.data);
-    r.className = 'row' + (st === 'down' ? ' is-down' : '');
-    var pill = r.querySelector('.pill');
-    pill.className = 'pill ' + st;
-    pill.textContent = labels[st];
-    var b = r.querySelector('.stat b');
-    b.textContent = st === 'down' ? '—' : s.ms + ' ms';
-    if (tick && st === 'ok') { b.classList.remove('tick'); void b.offsetWidth; b.classList.add('tick'); }
-    r.querySelector('.a').setAttribute('d', p.area);
-    r.querySelector('.l').setAttribute('d', p.line);
-    var c = r.querySelector('circle'); c.setAttribute('cx', p.x.toFixed(1)); c.setAttribute('cy', p.y.toFixed(1));
+  function setPill(kind, text) { pillEl.className = 'pill ' + kind; pillEl.textContent = text; }
+  function emptyRow(text) {
+    rowMap = {};
+    rowsEl.innerHTML = '<li class="row-empty"></li>';
+    rowsEl.firstChild.textContent = text;
   }
-  function paintSummary() {
-    var down = sites.some(function (s) { return state[s.id] === 'down'; });
-    var deg = sites.some(function (s) { return state[s.id] === 'degraded'; });
-    var pill = document.getElementById('summary-pill');
-    pill.className = 'pill ' + (down ? 'down' : deg ? 'degraded' : 'ok');
-    pill.textContent = down ? '1 site down' : deg ? 'Checking' : 'All systems operational';
-  }
-  function paintAll(tick) { sites.forEach(function (s) { paintRow(s, tick); }); paintSummary(); }
-
-  var logEl = document.getElementById('log');
+  function hostOf(url) { try { return new URL(url).host; } catch (e) { return url || ''; } }
   function pad2(n) { return (n < 10 ? '0' : '') + n; }
-  function log(kind, text) {
-    var d = new Date();
+
+  function log(kind, text, when) {
     var line = document.createElement('div');
     line.className = kind;
-    line.textContent = pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()) + '  ' + text;
+    line.textContent = pad2(when.getHours()) + ':' + pad2(when.getMinutes()) + ':' + pad2(when.getSeconds()) + '  ' + text;
     logEl.appendChild(line);
     while (logEl.children.length > 5) logEl.removeChild(logEl.firstChild);
   }
-
-  function check() {
-    sites.forEach(function (s) {
-      if (state[s.id] !== 'ok') return;
-      var v = s.ms + (Math.random() - 0.5) * s.jit * 1.6;
-      if (Math.random() < 0.08) v += s.jit * 2;
-      s.ms = Math.round(Math.max(s.min, Math.min(s.max, v)));
-      s.data.push(s.ms); s.data.shift();
-      log('ok', '[OK] ' + s.name + ' (200 in ' + s.ms + ' ms)');
-    });
-    paintAll(true);
-  }
-
-  var wrapEl = document.getElementById('alert-wrap');
-  var cardEl = document.getElementById('alert-card');
-  function showAlert(kind) {
-    var down = kind === 'down';
-    cardEl.className = 'alert-card' + (down ? '' : ' up');
-    cardEl.innerHTML = '<div class="who">Sentinel <span>APP</span></div>' +
-      '<div class="t">' + (down ? '🔴 API is DOWN' : '🟢 API has recovered') + '</div>' +
-      '<div class="u">https://api.example.com/health</div>' +
-      '<div class="f">' + (down
-        ? '<div><b>Reason</b>HTTP 503</div><div><b>Failed checks</b>2</div>'
-        : '<div><b>Downtime</b>2m</div><div><b>Response time</b>91 ms</div>') + '</div>';
-    wrapEl.hidden = false;
-  }
-
-  var api = sites[1];
-  var btn = document.getElementById('sim-btn');
-  var note = document.getElementById('sim-note');
-  var isDown = false, busy = false;
-  btn.addEventListener('click', function () {
-    if (busy) return;
-    if (!isDown) {
-      busy = true; btn.disabled = true;
-      state.api = 'degraded'; paintAll();
-      log('warn', '[FAIL] API: HTTP 503 (1 in a row)');
-      note.textContent = 'Check 1 failed. No alert yet, because the threshold is 2.';
-      setTimeout(function () {
-        state.api = 'down'; paintAll(); showAlert('down');
-        log('fail', '[FAIL] API: HTTP 503 (2 in a row)');
-        log('fail', '[DOWN] API  alert sent to Discord');
-        note.textContent = 'Check 2 failed. One DOWN alert is sent, and no more until recovery.';
-        btn.textContent = 'Restore the API'; btn.disabled = false; busy = false; isDown = true;
-      }, 1300);
+  function logSite(site, when) {
+    if (site.status === 'operational') {
+      log('ok', '[OK] ' + site.name + ' (' + (site.status_code || 200) + ' in ' + Math.round(site.latency_ms || 0) + ' ms)', when);
+    } else if (site.status === 'down') {
+      log('fail', '[DOWN] ' + site.name + ': ' + (site.error || 'no response'), when);
     } else {
-      state.api = 'ok'; api.ms = 91; api.data.push(91); api.data.shift();
-      paintAll(true); showAlert('up');
-      log('ok', '[RECOVERED] API after 2m');
-      note.textContent = 'First healthy check. Sentinel sends one recovery message with the downtime.';
-      btn.textContent = 'Simulate an outage'; isDown = false;
+      log('warn', '[FAIL] ' + site.name + ': ' + (site.error || 'check failed'), when);
     }
-  });
+  }
 
-  paintAll();
-  log('ok', 'Sentinel 2.0.0 watching 4 sites every 5s');
-  check();
+  function ensureRow(site) {
+    if (rowMap[site.name]) return rowMap[site.name];
+    var li = document.createElement('li');
+    li.className = 'row';
+    li.innerHTML = '<div class="row-name"><strong><a target="_blank" rel="noopener"></a></strong><span></span></div>' +
+      '<svg class="spark" viewBox="0 0 112 32" aria-hidden="true"><path class="a"/><path class="l"/><circle r="2.6"/></svg>' +
+      '<div class="stat"><b></b><small>latency</small></div><span class="pill"></span>';
+    rowsEl.appendChild(li);
+    rowMap[site.name] = { el: li, ms: null };
+    return rowMap[site.name];
+  }
 
-  /* countdown + progress, driven by one animation frame loop */
-  var INTERVAL = 5000, startAt = performance.now(), lastLeft = -1;
-  var cdEl = document.getElementById('countdown');
-  var fillEl = document.getElementById('fill');
+  function paintSite(site) {
+    var r = ensureRow(site), li = r.el;
+    var st = labels[site.status] ? site.status : 'unknown';
+    li.className = 'row' + (st === 'down' ? ' is-down' : '');
+    var a = li.querySelector('a');
+    a.textContent = site.name;
+    if (/^https?:\/\//i.test(site.url || '')) a.href = site.url;
+    li.querySelector('.row-name span').textContent = hostOf(site.url);
+    li.querySelector('.stat small').textContent = typeof site.uptime_percent === 'number' ? site.uptime_percent + '% up' : 'latency';
+    var pill = li.querySelector('.pill');
+    pill.className = 'pill ' + pillClass[st];
+    pill.textContent = labels[st];
+    var b = li.querySelector('.stat b');
+    var ms = typeof site.latency_ms === 'number' ? Math.round(site.latency_ms) : null;
+    b.textContent = ms === null ? '—' : ms + ' ms';
+    if (ms !== null && r.ms !== ms) { b.classList.remove('tick'); void b.offsetWidth; b.classList.add('tick'); }
+    r.ms = ms;
+    var p = sparkPaths(site.recent_latencies_ms);
+    var svg = li.querySelector('.spark');
+    svg.style.visibility = p ? 'visible' : 'hidden';
+    if (p) {
+      li.querySelector('.a').setAttribute('d', p.area);
+      li.querySelector('.l').setAttribute('d', p.line);
+      var c = li.querySelector('circle');
+      c.setAttribute('cx', p.x.toFixed(1));
+      c.setAttribute('cy', p.y.toFixed(1));
+    }
+  }
+
+  function render(data) {
+    var when = new Date(data.generated_at);
+    var stale = isNaN(when.getTime()) || (Date.now() - when.getTime() > STALE_MS);
+    var sites = Array.isArray(data.sites) ? data.sites : [];
+    if (!sites.length) { emptyRow('The latest check had no sites to report.'); setPill('degraded', 'No data'); return; }
+    if (rowsEl.querySelector('.row-empty')) { rowsEl.innerHTML = ''; rowMap = {}; }
+    sites.forEach(paintSite);
+    Object.keys(rowMap).forEach(function (name) {
+      if (!sites.some(function (s) { return s.name === name; })) { rowMap[name].el.remove(); delete rowMap[name]; }
+    });
+    if (data.generated_at !== lastStamp) {
+      sites.forEach(function (s) { logSite(s, when); });
+      lastStamp = data.generated_at;
+    }
+    var down = sites.filter(function (s) { return s.status === 'down'; }).length;
+    var shaky = sites.some(function (s) { return s.status !== 'operational' && s.status !== 'down'; });
+    if (stale) setPill('degraded', 'Data is stale');
+    else if (down) setPill('down', down + (down === 1 ? ' site down' : ' sites down'));
+    else if (shaky) setPill('degraded', 'Checking');
+    else setPill('ok', 'All systems operational');
+    liveEl.className = 'live' + (stale ? ' stale' : '');
+    liveEl.textContent = stale ? 'Stale' : 'Live';
+    lastData = data;
+  }
+
+  function ago(ms) {
+    var m = Math.floor(ms / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return m + ' min ago';
+    var h = Math.floor(m / 60);
+    return h + (h === 1 ? ' hour ago' : ' hours ago');
+  }
+  function paintMeta() {
+    if (!lastData) return;
+    var when = new Date(lastData.generated_at);
+    if (!isNaN(when.getTime())) metaEl.textContent = 'checked ' + ago(Date.now() - when.getTime()) + ' · every 5 min';
+  }
+
+  function load() {
+    // One request per minute bucket keeps the shared CDN copy fresh without hammering it.
+    fetch(DATA_URL + '?t=' + Math.floor(Date.now() / 60000), { cache: 'no-store' })
+      .then(function (res) { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+      .then(function (data) { render(data); paintMeta(); })
+      .catch(function () {
+        liveEl.className = 'live stale';
+        if (!lastData) {
+          emptyRow('Waiting for the first check. Live results appear here a few minutes after the workflow starts.');
+          liveEl.textContent = 'Waiting';
+          metaEl.textContent = 'no data yet';
+          setPill('degraded', 'Waiting for data');
+        } else {
+          liveEl.textContent = 'Offline';
+          metaEl.textContent = 'could not refresh';
+        }
+      });
+  }
+
+  emptyRow('Loading live status…');
+  load();
+  var startAt = performance.now(), lastSec = -1;
   function frame(now) {
     var el = now - startAt;
-    if (el >= INTERVAL) { check(); startAt = now; el = 0; }
-    var left = Math.ceil((INTERVAL - el) / 1000);
-    if (left !== lastLeft) { cdEl.textContent = left; lastLeft = left; }
-    if (!reduce) fillEl.style.transform = 'scaleX(' + (el / INTERVAL).toFixed(3) + ')';
+    if (el >= REFRESH_MS) { load(); startAt = now; el = 0; }
+    var sec = Math.floor(now / 1000);
+    if (sec !== lastSec) { lastSec = sec; paintMeta(); }
+    if (!reduce) fillEl.style.transform = 'scaleX(' + (el / REFRESH_MS).toFixed(3) + ')';
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

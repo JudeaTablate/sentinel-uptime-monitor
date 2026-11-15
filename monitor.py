@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Sentinel: a lightweight uptime monitor with Discord alerting.
+"""Sentinel: a lightweight uptime monitor with Discord and email alerting.
 
 Checks a list of HTTP(S) endpoints on a schedule, tracks their state, and sends
 a Discord message only when something changes (down, recovered, certificate
 expiring). Results are also written to ``status.json`` for dashboards.
 
-Secrets are never stored in this file or in config. The Discord webhook is read
-from the ``DISCORD_WEBHOOK_URL`` environment variable (or a local ``.env``).
+Secrets are never stored in this file or in config. Alert credentials are read
+from environment variables (or a local ``.env``): ``DISCORD_WEBHOOK_URL`` for
+Discord, and ``SMTP_USER`` / ``SMTP_PASSWORD`` / ``ALERT_EMAIL_TO`` for email.
+The whole site list can also be supplied privately through ``SENTINEL_CONFIG``.
 """
 
 from __future__ import annotations
@@ -17,14 +19,16 @@ import logging
 import os
 import re
 import signal
+import smtplib
 import socket
 import ssl
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from urllib.parse import urlparse
@@ -33,11 +37,13 @@ import requests
 import yaml
 from dotenv import load_dotenv
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 LOG = logging.getLogger("sentinel")
 USER_AGENT = f"Sentinel-Uptime-Monitor/{__version__}"
 WEBHOOK_ENV_VAR = "DISCORD_WEBHOOK_URL"
+CONFIG_ENV_VAR = "SENTINEL_CONFIG"
+STATE_DIR_ENV_VAR = "SENTINEL_STATE_DIR"
 WEBHOOK_PATTERN = re.compile(
     r"^https://(?:(?:canary|ptb)\.)?(?:discord|discordapp)\.com/api/(?:v\d+/)?webhooks/\d+/[\w-]+/?$"
 )
@@ -167,15 +173,32 @@ def parse_config(raw: dict) -> tuple[Settings, list[Site]]:
     return settings, sites
 
 
+def load_config_text(text: str, source: str = "config") -> tuple[Settings, list[Site]]:
+    """Parse YAML text (a file's contents or the SENTINEL_CONFIG secret)."""
+    try:
+        raw = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        problem = getattr(exc, "problem", None) or "invalid YAML"
+        raise ConfigError(f"could not parse {source}: {problem}") from None
+    return parse_config(raw)
+
+
 def load_config(path: str | Path) -> tuple[Settings, list[Site]]:
     path = Path(path)
     if not path.is_file():
         raise ConfigError(f"config file not found: {path}")
-    try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:
-        raise ConfigError(f"could not parse {path}: {exc}") from None
-    return parse_config(raw)
+    return load_config_text(path.read_text(encoding="utf-8"), str(path))
+
+
+def relocate_state(settings: Settings, directory: str | Path) -> Settings:
+    """Keep the log, state and status files inside one directory."""
+    base = Path(directory)
+    return replace(
+        settings,
+        log_file=str(base / Path(settings.log_file).name),
+        state_file=str(base / Path(settings.state_file).name),
+        status_file=str(base / Path(settings.status_file).name),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -322,6 +345,7 @@ def load_state(path: str | Path) -> dict[str, SiteState]:
 
 def _atomic_write(path: str | Path, payload: dict) -> None:
     path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
     temp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     temp.replace(path)
@@ -386,6 +410,8 @@ def human_duration(start_iso: str | None, end_iso: str | None = None) -> str:
 class DiscordNotifier:
     """Posts embeds to a Discord webhook. The URL is never logged."""
 
+    name = "Discord"
+
     def __init__(self, webhook_url: str, session: requests.Session | None = None):
         if not WEBHOOK_PATTERN.match(webhook_url):
             raise ConfigError(f"{WEBHOOK_ENV_VAR} is not a valid Discord webhook URL")
@@ -421,6 +447,105 @@ class DiscordNotifier:
             return False
         LOG.error("Discord rate limit not cleared after retries")
         return False
+
+
+class EmailNotifier:
+    """Sends alerts over SMTP (Gmail by default). Credentials are never logged."""
+
+    name = "Email"
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        user: str,
+        password: str,
+        recipients: list[str],
+        sender: str | None = None,
+        timeout: float = 20.0,
+    ):
+        self._host, self._port = host, port
+        self._user, self._password = user, password
+        self._recipients = recipients
+        self._sender = sender or user
+        self._timeout = timeout
+
+    @classmethod
+    def from_env(cls) -> "EmailNotifier | None":
+        user = os.environ.get("SMTP_USER", "").strip()
+        password = os.environ.get("SMTP_PASSWORD", "").strip()
+        to = os.environ.get("ALERT_EMAIL_TO", "").strip()
+        if not (user and password and to):
+            if user or password or to:
+                LOG.warning("Email alerts need SMTP_USER, SMTP_PASSWORD and ALERT_EMAIL_TO; email is off")
+            return None
+        recipients = [item.strip() for item in to.replace(";", ",").split(",") if item.strip()]
+        if not recipients or any("@" not in item or " " in item for item in recipients):
+            raise ConfigError("ALERT_EMAIL_TO must be one or more email addresses separated by commas")
+        host = os.environ.get("SMTP_HOST", "").strip() or "smtp.gmail.com"
+        try:
+            port = int(os.environ.get("SMTP_PORT", "").strip() or 465)
+        except ValueError:
+            raise ConfigError("SMTP_PORT must be a number") from None
+        sender = os.environ.get("ALERT_EMAIL_FROM", "").strip() or None
+        return cls(host, port, user, password, recipients, sender)
+
+    def build_message(self, embed: dict) -> EmailMessage:
+        title = " ".join(str(embed.get("title", "Sentinel alert")).split())
+        lines = [title]
+        if embed.get("description"):
+            lines.append(str(embed["description"]))
+        lines.append("")
+        for item in embed.get("fields", []):
+            lines.append(f"{item['name']}: {item['value']}")
+        if embed.get("timestamp"):
+            lines.append(f"Time (UTC): {embed['timestamp']}")
+        lines += ["", "Sent by Sentinel uptime monitor."]
+        message = EmailMessage()
+        message["Subject"] = f"[Sentinel] {title}"
+        message["From"] = self._sender
+        message["To"] = ", ".join(self._recipients)
+        message.set_content("\n".join(lines))
+        return message
+
+    def send(self, embed: dict) -> bool:
+        message = self.build_message(embed)
+        context = ssl.create_default_context()
+        try:
+            if self._port == 465:
+                smtp = smtplib.SMTP_SSL(self._host, self._port, timeout=self._timeout, context=context)
+            else:
+                smtp = smtplib.SMTP(self._host, self._port, timeout=self._timeout)
+            with smtp:
+                if self._port != 465:
+                    smtp.starttls(context=context)
+                smtp.login(self._user, self._password)
+                smtp.send_message(message)
+            return True
+        except smtplib.SMTPAuthenticationError:
+            LOG.error("Email login was rejected. Use a Gmail App Password, not your normal password.")
+        except (smtplib.SMTPException, OSError) as exc:
+            LOG.error("Email delivery failed: %s", type(exc).__name__)
+        return False
+
+
+class MultiNotifier:
+    """Sends each alert to every configured channel."""
+
+    def __init__(self, notifiers):
+        self.notifiers = list(notifiers)
+
+    def __bool__(self) -> bool:
+        return bool(self.notifiers)
+
+    def send(self, embed: dict) -> bool:
+        delivered = [notifier.send(embed) for notifier in self.notifiers]
+        return any(delivered)
+
+
+def build_notifier() -> MultiNotifier:
+    channels = [DiscordNotifier.from_env(), EmailNotifier.from_env()]
+    return MultiNotifier([channel for channel in channels if channel])
 
 
 def down_embed(result: CheckResult, state: SiteState) -> dict:
@@ -466,7 +591,7 @@ def run_cycle(
     sites: list[Site],
     settings: Settings,
     states: dict[str, SiteState],
-    notifier: DiscordNotifier | None,
+    notifier: "MultiNotifier | DiscordNotifier | EmailNotifier | None",
     session: requests.Session | None = None,
 ) -> list[CheckResult]:
     """Check every site once, update state, and send alerts for changes."""
@@ -509,6 +634,8 @@ def run_cycle(
 
 
 def setup_logging(log_file: str, verbose: bool) -> None:
+    Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+    LOG.handlers.clear()
     LOG.setLevel(logging.DEBUG if verbose else logging.INFO)
     formatter = logging.Formatter("%(asctime)s %(levelname)-7s %(message)s", "%Y-%m-%d %H:%M:%S")
     for handler in (
@@ -520,10 +647,10 @@ def setup_logging(log_file: str, verbose: bool) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="sentinel", description="Lightweight uptime monitor with Discord alerts.")
+    parser = argparse.ArgumentParser(prog="sentinel", description="Lightweight uptime monitor with Discord and email alerts.")
     parser.add_argument("-c", "--config", default="config.yaml", help="path to the YAML config (default: config.yaml)")
     parser.add_argument("--once", action="store_true", help="run a single cycle and exit (exit code 1 if any site is failing)")
-    parser.add_argument("--test-alert", action="store_true", help="send a test message to Discord and exit")
+    parser.add_argument("--test-alert", action="store_true", help="send a test alert to every configured channel and exit")
     parser.add_argument("-v", "--verbose", action="store_true", help="show debug output")
     parser.add_argument("--version", action="version", version=f"sentinel {__version__}")
     return parser.parse_args(argv)
@@ -534,8 +661,15 @@ def main(argv: list[str] | None = None) -> int:
     load_dotenv()
 
     try:
-        settings, sites = load_config(args.config)
-        notifier = DiscordNotifier.from_env()
+        inline_config = os.environ.get(CONFIG_ENV_VAR, "").strip()
+        if inline_config:
+            settings, sites = load_config_text(inline_config, CONFIG_ENV_VAR)
+        else:
+            settings, sites = load_config(args.config)
+        state_dir = os.environ.get(STATE_DIR_ENV_VAR, "").strip()
+        if state_dir:
+            settings = relocate_state(settings, state_dir)
+        notifier = build_notifier()
     except ConfigError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
@@ -544,21 +678,30 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.test_alert:
         if not notifier:
-            print(f"Set {WEBHOOK_ENV_VAR} first (see .env.example).", file=sys.stderr)
+            print(
+                "No alert channel is configured. Set DISCORD_WEBHOOK_URL and/or "
+                "SMTP_USER, SMTP_PASSWORD and ALERT_EMAIL_TO (see .env.example).",
+                file=sys.stderr,
+            )
             return 2
-        sent = notifier.send(
-            {
-                "title": "✅ Sentinel test alert",
-                "description": "Your webhook is configured correctly.",
-                "color": COLOR_UP,
-                "timestamp": utc_now(),
-            }
-        )
-        print("Test alert sent." if sent else "Test alert failed. Check the log.")
-        return 0 if sent else 1
+        test_embed = {
+            "title": "\u2705 Sentinel test alert",
+            "description": "Your alert channel is configured correctly.",
+            "color": COLOR_UP,
+            "timestamp": utc_now(),
+        }
+        failed = 0
+        for channel in notifier.notifiers:
+            delivered = channel.send(test_embed)
+            print(f"{channel.name}: {'sent' if delivered else 'FAILED (see the log)'}")
+            failed += not delivered
+        return 1 if failed else 0
 
     if not notifier:
-        LOG.warning("%s is not set: monitoring will run without Discord alerts", WEBHOOK_ENV_VAR)
+        LOG.warning(
+            "No alert channel is configured (DISCORD_WEBHOOK_URL, or SMTP_USER + SMTP_PASSWORD + "
+            "ALERT_EMAIL_TO): monitoring will run without alerts"
+        )
 
     states = load_state(settings.state_file)
     states = {name: state for name, state in states.items() if name in {site.name for site in sites}}
